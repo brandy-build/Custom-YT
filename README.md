@@ -2,6 +2,8 @@
 
 > A tiny, high-efficiency Rust YouTube CLI built for low-end Linux machines.
 
+> Search, choose, and play YouTube from the terminal in seconds.
+
 ```text
 	____            __           __        _______ __
   / __ \__  _______/ /____  ____/ /__     / ____(_) /___
@@ -9,6 +11,25 @@
 / /_/ / /_/ / /  / /_/  __/ /_/ /  __/  / /___/ / / /_/ /
 \___\_\\__,_/_/   \__/\___/\__,_/\___/   \____/_/_/\____/
 ```
+
+## Why People Share It
+
+Custom YT is the kind of tool that gets attention because it solves a familiar problem in a surprisingly small package.
+
+- It feels fast the moment it launches.
+- It works on machines people usually give up on.
+- It replaces a heavyweight browser workflow with a single terminal flow.
+- It has a memorable identity, not just a utility name.
+
+## Viral-Ready Snapshot
+
+If you want to describe the project in one line:
+
+> A Rust YouTube CLI that makes low-end Linux machines feel useful again.
+
+If you want a shorter social post:
+
+> Built a tiny Rust YouTube CLI for low-RAM Linux boxes. Search, pick, and play without opening a browser.
 
 Custom YT exists for a simple reason: sometimes you want to search and watch YouTube from a terminal without dragging in a heavy desktop app, browser session, or background service. This project keeps the workflow minimal, fast, and easy to audit so it can run comfortably on systems with very limited RAM and CPU headroom.
 
@@ -117,6 +138,15 @@ search query -> yt-dlp search -> choose result -> choose quality -> extract stre
 ## Open Source Notes
 
 This project is designed to stay approachable for contributors and easy to fork for personal use cases. The code is intentionally small so that changes to search behavior, playback flags, or quality presets remain simple to reason about.
+
+## Share Kit
+
+Want to help the project spread?
+
+- Star the repo if you like small terminal tools.
+- Share the one-line description above with a screenshot or terminal clip.
+- Mention the low-spec Linux angle, since that is the strongest hook.
+- Fork it if you want to adapt the playback behavior or key bindings.
 
 If you want to adapt it for your own setup, the most likely places to change are:
 
