@@ -78,13 +78,8 @@ fn ensure_required_binaries() -> Result<()> {
 }
 
 fn print_startup_banner() {
-    println!(r#"
-   ____            __           __        _______ __
-  / __ \__  _______/ /____  ____/ /__     / ____(_) /___
- / / / / / / / ___/ __/ _ \/ __  / _ \   / /   / / / __ \
-/ /_/ / /_/ / /  / /_/  __/ /_/ /  __/  / /___/ / / /_/ /
-\___\_\\__,_/_/   \__/\___/\__,_/\___/   \____/_/_/\____/
-"#);
+    let banner = include_str!("../ascii-art.txt").trim_matches('\n');
+    println!("{banner}");
 
     println!("Command Manual");
     println!("  1. Enter a search query.");

@@ -4,32 +4,9 @@
 
 > Search, choose, and play YouTube from the terminal in seconds.
 
-```text
-	____            __           __        _______ __
-  / __ \__  _______/ /____  ____/ /__     / ____(_) /___
- / / / / / / / ___/ __/ _ \/ __  / _ \   / /   / / / __ \
-/ /_/ / /_/ / /  / /_/  __/ /_/ /  __/  / /___/ / / /_/ /
-\___\_\\__,_/_/   \__/\___/\__,_/\___/   \____/_/_/\____/
-```
+![Custom YT cuttlefish banner](ascii-art.png)
 
-## Why People Share It
-
-Custom YT is the kind of tool that gets attention because it solves a familiar problem in a surprisingly small package.
-
-- It feels fast the moment it launches.
-- It works on machines people usually give up on.
-- It replaces a heavyweight browser workflow with a single terminal flow.
-- It has a memorable identity, not just a utility name.
-
-## Viral-Ready Snapshot
-
-If you want to describe the project in one line:
-
-> A Rust YouTube CLI that makes low-end Linux machines feel useful again.
-
-If you want a shorter social post:
-
-> Built a tiny Rust YouTube CLI for low-RAM Linux boxes. Search, pick, and play without opening a browser.
+The full ASCII intro is rendered from [ascii-art.txt](ascii-art.txt) inside the app itself.
 
 Custom YT exists for a simple reason: sometimes you want to search and watch YouTube from a terminal without dragging in a heavy desktop app, browser session, or background service. This project keeps the workflow minimal, fast, and easy to audit so it can run comfortably on systems with very limited RAM and CPU headroom.
 
