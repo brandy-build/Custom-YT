@@ -2,6 +2,14 @@
 
 > A tiny, high-efficiency Rust YouTube CLI built for low-end Linux machines.
 
+```text
+	____            __           __        _______ __
+  / __ \__  _______/ /____  ____/ /__     / ____(_) /___
+ / / / / / / / ___/ __/ _ \/ __  / _ \   / /   / / / __ \
+/ /_/ / /_/ / /  / /_/  __/ /_/ /  __/  / /___/ / / /_/ /
+\___\_\\__,_/_/   \__/\___/\__,_/\___/   \____/_/_/\____/
+```
+
 Custom YT exists for a simple reason: sometimes you want to search and watch YouTube from a terminal without dragging in a heavy desktop app, browser session, or background service. This project keeps the workflow minimal, fast, and easy to audit so it can run comfortably on systems with very limited RAM and CPU headroom.
 
 ## What It Is For
