@@ -1,0 +1,61 @@
+name: Build & Release Binary
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on tags like v1.0.0, v1.1.0, etc.
+
+# Required permissions for GitHub Releases & SLSA Provenance Attestations
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build-release:
+    name: Build Linux Release Binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache cargo dependencies to speed up future builds
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Strip binary size
+        run: strip target/release/custom_yt
+
+      - name: Package binary
+        run: |
+          tar -czvf custom_yt-linux-amd64.tar.gz -C target/release custom_yt
+
+      # Generate cryptographic SLSA provenance attestation for security
+      - name: Generate SLSA Build Attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'target/release/custom_yt'
+
+      # Upload tarball binary to GitHub Releases with auto changelog
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: custom_yt-linux-amd64.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
