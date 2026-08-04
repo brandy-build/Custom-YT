@@ -4,9 +4,14 @@
 
 > Search, choose, and play YouTube from the terminal in seconds.
 
-![Custom YT cuttlefish banner](ascii-art.png)
+<p align="center">
+	<img src="ascii-art.png" alt="Custom YT cuttlefish banner" width="260" />
+</p>
 
-The full ASCII intro is rendered from [ascii-art.txt](ascii-art.txt) inside the app itself.
+<p align="center">
+	<img src="https://img.shields.io/badge/Rust-1F1F1F?style=flat-square&logo=rust&logoColor=white" alt="Rust" />
+	<img src="https://img.shields.io/badge/Linux-1F1F1F?style=flat-square&logo=linux&logoColor=white" alt="Linux" />
+</p>
 
 Custom YT exists for a simple reason: sometimes you want to search and watch YouTube from a terminal without dragging in a heavy desktop app, browser session, or background service. This project keeps the workflow minimal, fast, and easy to audit so it can run comfortably on systems with very limited RAM and CPU headroom.
 
@@ -16,6 +21,15 @@ Custom YT exists for a simple reason: sometimes you want to search and watch You
 - Picking from the top 5 results without a browser.
 - Playing H.264/AVC streams with `ffplay` to reduce decoding overhead.
 - Staying lightweight enough for Debian, antiX, and other low-spec Linux setups.
+
+## Tech Stack
+
+- Rust
+- Linux
+- `tokio`
+- `anyhow`
+- `yt-dlp`
+- `ffplay`
 
 ## Why This Project Exists
 
