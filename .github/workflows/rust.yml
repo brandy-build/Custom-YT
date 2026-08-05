@@ -12,21 +12,8 @@ permissions:
 
 jobs:
   build-release:
-    name: Build Release (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: custom_yt-linux-amd64.tar.gz
-            asset_path: custom_yt-linux-amd64.tar.gz
-          - os: windows-latest
-            artifact_name: custom_yt-windows-amd64.zip
-            asset_path: custom_yt-windows-amd64.zip
-          - os: macos-latest
-            artifact_name: custom_yt-macos-universal.tar.gz
-            asset_path: custom_yt-macos-universal.tar.gz
+    name: Build Linux Release Binary
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -49,29 +36,24 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
-      - name: Package binary (Linux / macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Package binary
         run: |
+          # Finds whichever binary cargo generated in target/release/ and packages it
           cd target/release
-          BIN_NAME=$(find . -maxdepth 1 -type f -executable ! -name "*.d" ! -name "*.so" ! -name "*.dylib" | head -n 1 | sed 's|./||')
-          tar -czvf "../../${{ matrix.artifact_name }}" "$BIN_NAME"
+          BIN_NAME=$(find . -maxdepth 1 -type f -executable ! -name "*.d" ! -name "*.so" | head -n 1 | sed 's|./||')
+          strip "$BIN_NAME"
+          tar -czvf "../../custom_yt-linux-amd64.tar.gz" "$BIN_NAME"
           cd ../..
-
-      - name: Package binary (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path target/release/custom_yt.exe -DestinationPath ${{ matrix.artifact_name }}
 
       - name: Generate SLSA Build Attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: '${{ matrix.asset_path }}'
+          subject-path: 'custom_yt-linux-amd64.tar.gz'
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_path }}
+          files: custom_yt-linux-amd64.tar.gz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
