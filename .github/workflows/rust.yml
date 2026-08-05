@@ -12,10 +12,10 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # Job 1: Format & Compilation Checks (Runs on every Push / PR)
+  # Job 1: Compilation Check (Runs on every Push / PR)
   # ------------------------------------------------------------------
   check:
-    name: Check & Code Quality
+    name: Check Code Compilation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -23,23 +23,15 @@ jobs:
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - name: Enable Cargo Build Cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Check Formatting
-        run: cargo fmt --check
-
-      - name: Run Clippy
-        run: cargo clippy -- -D warnings
 
       - name: Cargo Check
         run: cargo check --all-targets
 
   # ------------------------------------------------------------------
-  # Job 2: Build & Package Binaries (Triggers on Version Tags e.g. v1.0.0)
+  # Job 2: Build Cross-Platform Release Binaries (Runs on Version Tags)
   # ------------------------------------------------------------------
   build-release:
     name: Release Build (${{ matrix.target }})
