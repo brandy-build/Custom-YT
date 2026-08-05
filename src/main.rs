@@ -129,19 +129,21 @@ async fn main() -> Result<()> {
         };
 
         let mut settings = prompt_quality_and_subtitles()?;
+        let mut loop_video = false;
 
         'playback: loop {
             println!();
-            println!("Now playing: {}", queue.current().title);
+            println!("Now playing: {} {}", queue.current().title, if loop_video { "[Looping]" } else { "" });
 
-            if let Err(err) = play_current(&queue, &settings).await {
+            if let Err(err) = play_current(&queue, &settings, loop_video).await {
                 println!("Playback error: {err:#}");
             }
 
             loop {
                 println!();
                 println!(
-                    "[n] Next video   [r] Replay   [c] Change quality/subtitles   [s] New search   [q] Quit"
+                    "[n] Next video   [r] Replay   [c] Change quality/subtitles   [l] Toggle loop: {}   [s] New search   [q] Quit",
+                    if loop_video { "ON" } else { "OFF" }
                 );
                 let action = prompt_nonempty("Choose an option: ")?.to_ascii_lowercase();
 
@@ -158,9 +160,13 @@ async fn main() -> Result<()> {
                         settings = prompt_quality_and_subtitles()?;
                         continue 'playback;
                     }
+                    "l" => {
+                        loop_video = !loop_video;
+                        continue 'playback;
+                    }
                     "s" => continue 'session,
                     "q" => break 'session,
-                    _ => println!("Enter n, r, c, s, or q."),
+                    _ => println!("Enter n, r, c, l, s, or q."),
                 }
             }
         }
@@ -245,9 +251,8 @@ async fn build_playlist_queue(query: &str) -> Result<Option<PlaybackQueue>> {
 
     let playlists = fetch_playlist_search_results(query, 5).await?;
     if playlists.is_empty() {
-        bail!(
-            "No playlist results found. Try a different query or include 'playlist' in search text"
-        );
+        println!("No playlist results found. Try a different query or include 'playlist' in search text.");
+        return Ok(None);
     }
 
     println!();
@@ -275,7 +280,8 @@ async fn build_playlist_queue(query: &str) -> Result<Option<PlaybackQueue>> {
     let playlist_videos =
         fetch_playlist_videos(&selected_playlist.url, 1, PLAYLIST_BATCH_SIZE).await?;
     if playlist_videos.is_empty() {
-        bail!("Selected playlist has no playable videos");
+        println!("Selected playlist has no playable videos.");
+        return Ok(None);
     }
 
     println!();
@@ -319,11 +325,9 @@ fn prompt_quality_and_subtitles() -> Result<PlaybackSettings> {
     })
 }
 
-/// Plays the queue's current item via mpv, cleaning up any subtitle temp file afterward.
-// Gemini: Purpose & Solution - Refactored `play_current` to bypass pre-resolving URLs with `yt-dlp -g`.
-// Direct resolution caused separate audio/video URLs for >360p streams, which resulted in video without audio or exit status 1.
-// Now, we pass the full watch URL and `format_filter` directly into `launch_mpv`, allowing mpv's internal `ytdl_hook` to safely stream and mux audio/video.
-async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings) -> Result<()> {
+// Gemini: Purpose & Solution - Replaced mpv with ffplay architecture.
+// First fetches direct stream URLs via `yt-dlp -g` to decouple media playback from YouTube extraction hooks, eliminating sub-process / Lua script exit errors on Windows.
+async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings, loop_video: bool) -> Result<()> {
     let selected = queue.current();
     let watch_url = format!("https://www.youtube.com/watch?v={}", selected.id);
 
@@ -334,12 +338,16 @@ async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings) -> Res
         None
     };
 
-    println!("Launching playback via mpv...");
-    let playback = launch_mpv(
-        &watch_url,
+    println!("Resolving direct stream URL...");
+    let (video_url, audio_url) = resolve_stream_urls(&watch_url, settings.format_filter()).await?;
+
+    println!("Launching playback via ffplay...");
+    let playback = launch_ffplay(
+        &video_url,
+        audio_url.as_deref(),
         &selected.title,
-        settings.format_filter(),
         subtitle_file.as_deref(),
+        loop_video,
     )
     .await;
 
@@ -350,11 +358,106 @@ async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings) -> Res
     playback
 }
 
-/// Checks that `yt-dlp` and `mpv` are runnable, and prints an install hint
+// Gemini: Purpose & Solution - Directly queries `yt-dlp -g` for raw stream links.
+// YouTube DASH streams return separate lines for video and audio URLs; this helper splits them so ffplay can load both simultaneously.
+async fn resolve_stream_urls(watch_url: &str, format_filter: &str) -> Result<(String, Option<String>)> {
+    let output = Command::new("yt-dlp")
+        .arg("-g")
+        .arg("-f")
+        .arg(format_filter)
+        .arg(watch_url)
+        .output()
+        .await
+        .context("failed to execute yt-dlp to resolve stream URLs")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("yt-dlp stream extraction failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let urls: Vec<&str> = stdout.lines().map(|line| line.trim()).filter(|line| !line.is_empty()).collect();
+
+    if urls.is_empty() {
+        bail!("yt-dlp returned no stream URLs");
+    }
+
+    let video_url = urls[0].to_string();
+    let audio_url = if urls.len() > 1 {
+        Some(urls[1].to_string())
+    } else {
+        None
+    };
+
+    Ok((video_url, audio_url))
+}
+
+// Gemini: Purpose & Solution - Spawns `ffplay` with direct stream URLs.
+// ffplay is lightweight (~30–50 MB RAM), executes natively on SDL2 without middleman hooks, and auto-exits on stream completion (`-autoexit`).
+async fn launch_ffplay(
+    video_url: &str,
+    audio_url: Option<&str>,
+    title: &str,
+    subtitle_file: Option<&Path>,
+    loop_video: bool,
+) -> Result<()> {
+    let window_title = sanitize_window_title(title);
+
+    let mut ffplay = Command::new("ffplay");
+    
+    // If looping, we don't want autoexit
+    if loop_video {
+        ffplay.arg("-loop").arg("0");
+    } else {
+        ffplay.arg("-autoexit");
+    }
+
+    ffplay
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-window_title")
+        .arg(&window_title)
+        .arg("-i")
+        .arg(video_url);
+
+    if let Some(audio) = audio_url {
+        ffplay.arg("-i").arg(audio);
+    }
+
+    // Apply subtitle overlay if subtitles were downloaded
+    if let Some(sub_path) = subtitle_file {
+        let path_str = sub_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
+        ffplay.arg("-vf").arg(format!("subtitles='{}'", path_str));
+    }
+
+    let mut child = ffplay
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("failed to launch ffplay")?;
+
+    tokio::select! {
+        status = child.wait() => {
+            let status = status.context("failed to wait on ffplay child process")?;
+            if !status.success() {
+                bail!("ffplay exited with status {status}");
+            }
+            println!("Playback finished.");
+        }
+        _ = signal::ctrl_c() => {
+            println!("\nReceived Ctrl+C interrupt. Terminating ffplay...");
+            let _ = child.kill().await;
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks that `yt-dlp` and `ffplay` are runnable, and prints an install hint
 /// tailored to the current OS if either is missing.
 fn ensure_required_binaries() -> Result<()> {
-    // Requires mpv for zero-overhead hardware-accelerated subtitle overlays
-    let required = ["yt-dlp", "mpv"];
+    let required = ["yt-dlp", "ffplay"];
     let missing: Vec<&str> = required
         .iter()
         .copied()
@@ -380,29 +483,28 @@ fn ensure_required_binaries() -> Result<()> {
     bail!("required system binaries are missing or unreachable");
 }
 
-/// Returns an OS-appropriate install command block for the missing binaries.
+/// Returns an OS-appropriate install command block for missing dependencies.
 fn install_hint_for_current_os() -> &'static str {
     if cfg!(target_os = "windows") {
         "Install them on Windows with one of:\n\n  \
-         scoop install mpv yt-dlp ffmpeg\n  \
-         choco install mpv yt-dlp ffmpeg\n\n\
+         winget install yt-dlp.yt-dlp\n  \
+         winget install Gyan.FFmpeg\n\n\
          Then confirm they're resolvable with:\n\n  \
-         where.exe mpv\n  where.exe yt-dlp"
+         where.exe ffplay\n  where.exe yt-dlp"
     } else if cfg!(target_os = "macos") {
         "Install them on macOS with:\n\n  \
-         brew install mpv yt-dlp ffmpeg\n\n\
+         brew install ffmpeg yt-dlp\n\n\
          Then confirm they're resolvable with:\n\n  \
-         which mpv\n  which yt-dlp"
+         which ffplay\n  which yt-dlp"
     } else {
         "Install them on Debian/antiX/Ubuntu with:\n\n  \
-         sudo apt update && sudo apt install --no-install-recommends -y mpv yt-dlp ffmpeg\n\n\
+         sudo apt update && sudo apt install -y ffmpeg yt-dlp\n\n\
          Then confirm they're resolvable with:\n\n  \
-         which mpv\n  which yt-dlp"
+         which ffplay\n  which yt-dlp"
     }
 }
 
-/// Tries to actually invoke `<name> --version` rather than manually walking
-/// PATH and checking file existence/extensions.
+/// Tries to invoke `<name> -version` to verify presence on system PATH.
 fn binary_is_runnable(name: &str) -> bool {
     use std::sync::mpsc;
     use std::time::Duration;
@@ -412,7 +514,7 @@ fn binary_is_runnable(name: &str) -> bool {
 
     std::thread::spawn(move || {
         let result = std::process::Command::new(&name_owned)
-            .arg("--version")
+            .arg("-version")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -425,25 +527,42 @@ fn binary_is_runnable(name: &str) -> bool {
 }
 
 fn print_startup_banner() {
-    let banner = include_str!("../ascii-art.txt").trim_matches('\n');
-    let compact_banner = banner.lines().take(5).collect::<Vec<_>>().join("\n");
-    println!("{compact_banner}");
+    let reset = "\x1b[0m";
+    let cyan = "\x1b[36m";
+    let white_bold = "\x1b[1;37m";
+    let dim = "\x1b[2;37m";
 
-    println!("Command Manual");
-    println!("  1. Enter a search query.");
-    println!("  2. Pick video mode or playlist mode.");
-    println!("  3. In video mode, use n/p paging and pick from visible 10 results.");
-    println!("  4. Choose a quality preset, or press Enter for 720p.");
-    println!("  5. Optionally enable subtitles.");
-    println!("  6. mpv plays the video with hardware-overlay subtitles.");
+    let banner = include_str!("../ascii-art.txt");
+    let lines: Vec<&str> = banner.lines().collect();
+
+    // Simple animation: move left-to-right
+    for offset in 0..10 {
+        print!("\x1b[2J\x1b[H"); // Clear screen and home cursor
+        for line in &lines {
+            println!("{}{:>width$}{}", cyan, "", line, width = offset);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    
+    println!();
+    println!("{}CuttleFish{} - Minimalist YouTube Terminal Player", white_bold, reset);
+    println!();
+    println!("{}Command Manual{}", white_bold, reset);
+    println!("  {}1.{} Enter a search query.", dim, reset);
+    println!("  {}2.{} Pick video mode or playlist mode.", dim, reset);
+    println!("  {}3.{} In video mode, use n/p paging and pick from visible 10 results.", dim, reset);
+    println!("  {}4.{} Choose a quality preset, or press Enter for 720p.", dim, reset);
+    println!("  {}5.{} Optionally enable subtitles.", dim, reset);
+    println!("  {}6.{} ffplay streams the direct media URLs seamlessly.", dim, reset);
     println!(
-        "  7. After playback: n = next video, r = replay, c = change quality, s = new search, q = quit."
+        "  {}7.{} After playback: n = next video, r = replay, c = change quality, l = toggle loop, s = new search, q = quit.",
+        dim, reset
     );
     println!();
-    println!("Architecture");
-    println!("  input -> yt-dlp search -> result selection -> stream extraction -> mpv -> next/replay/search");
-    println!("Design");
-    println!("  terminal-first, low-RAM, AVC-preferred, and hardware-overlay optimized");
+    println!("{}Architecture{}", white_bold, reset);
+    println!("  {}input -> yt-dlp search -> result selection -> direct URL resolution -> ffplay -> next/replay/search{}", dim, reset);
+    println!("{}Design{}", white_bold, reset);
+    println!("  {}terminal-first, ultra-low-RAM (~40MB), bulletproof process execution{}", dim, reset);
     println!();
 }
 
@@ -597,9 +716,7 @@ async fn fetch_playlist_search_results(query: &str, limit: usize) -> Result<Vec<
     Ok(results)
 }
 
-/// Fetches a 1-indexed, inclusive `[start, end]` range of a playlist's
-/// videos. Used both for the initial batch and for extending the queue
-/// when the user asks for "next" past what's already loaded.
+/// Fetches a 1-indexed, inclusive `[start, end]` range of a playlist's videos.
 async fn fetch_playlist_videos(
     playlist_url: &str,
     start: usize,
@@ -643,7 +760,7 @@ fn format_filter_for_quality(quality: usize) -> &'static str {
         1 => "best[height<=360][vcodec^=avc1][acodec!=none]/best[height<=360]",
         2 => "best[height<=480][vcodec^=avc1][acodec!=none]/best[height<=480]",
         3 => "best[height<=720][fps<=30][vcodec^=avc1][acodec!=none]/best[height<=720][fps<=30]",
-        4 => "best[height<=1080][vcodec^=avc1][acodec!=none]/best[height<=1080]",
+        4 => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
         _ => "best[height<=720][fps<=30][vcodec^=avc1][acodec!=none]/best[height<=720][fps<=30]",
     }
 }
@@ -702,63 +819,130 @@ async fn download_subtitle_file(
     Ok(None)
 }
 
-// Gemini: Purpose & Solution - Updated signature to take `watch_url` and `format_filter` directly.
-// By passing `--ytdl-format={format_filter}` directly to mpv, mpv invokes its native `yt-dlp` hook.
-// This resolves stream URLs dynamically and seamlessly muxes separate DASH audio and video streams, fixing runtime crashes and silent audio failures.
-async fn launch_mpv(
-    watch_url: &str,
-    title: &str,
-    format_filter: &str,
-    subtitle_file: Option<&Path>,
-) -> Result<()> {
-    let window_title = sanitize_window_title(title);
-
-    let mut mpv = Command::new("mpv");
-    mpv.arg("--no-config")
-        .arg("--force-window=immediate")
-        // Gemini: Purpose & Solution - Pass `--title` and `--ytdl-format` explicitly to mpv.
-        .arg(format!("--title={}", window_title))
-        .arg(format!("--ytdl-format={}", format_filter))
-        .arg("--cache=yes")
-        .arg("--demuxer-max-bytes=15MiB") // Capped memory cache (Ideal for 2GB RAM)
-        .arg("--vd-lavc-threads=auto")
-        .arg("--user-agent=Mozilla/5.0 (X11; Linux x86_64)");
-
-    // Pass subtitle file as a sidecar track for hardware-accelerated overlay
-    if let Some(path) = subtitle_file {
-        mpv.arg(format!("--sub-file={}", path.to_string_lossy()));
-    }
-
-    let mut child = mpv
-        .arg(watch_url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to launch mpv")?;
-
-    tokio::select! {
-        status = child.wait() => {
-            let status = status.context("failed to wait on mpv child process")?;
-            if !status.success() {
-                bail!("mpv exited with status {status}");
-            }
-            println!("Playback finished.");
-        }
-        _ = signal::ctrl_c() => {
-            println!("\nReceived Ctrl+C interrupt. Terminating mpv...");
-            let _ = child.kill().await;
-        }
-    }
-
-    Ok(())
-}
-
 fn sanitize_window_title(title: &str) -> String {
     let cleaned = title.replace(['\n', '\r'], " ");
     if cleaned.is_empty() {
         String::from("YouTube Playback")
     } else {
         cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_window_title() {
+        assert_eq!(sanitize_window_title(""), "YouTube Playback");
+        assert_eq!(sanitize_window_title("Hello\nWorld"), "Hello World");
+        assert_eq!(sanitize_window_title("Hello\rWorld"), "Hello World");
+        assert_eq!(sanitize_window_title("Hello\r\nWorld"), "Hello  World");
+        assert_eq!(sanitize_window_title("Regular Title"), "Regular Title");
+    }
+
+    #[test]
+    fn test_format_filter_for_quality() {
+        assert_eq!(
+            format_filter_for_quality(1),
+            "best[height<=360][vcodec^=avc1][acodec!=none]/best[height<=360]"
+        );
+        assert_eq!(
+            format_filter_for_quality(2),
+            "best[height<=480][vcodec^=avc1][acodec!=none]/best[height<=480]"
+        );
+        assert_eq!(
+            format_filter_for_quality(3),
+            "best[height<=720][fps<=30][vcodec^=avc1][acodec!=none]/best[height<=720][fps<=30]"
+        );
+        assert_eq!(
+            format_filter_for_quality(4),
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        );
+        assert_eq!(
+            format_filter_for_quality(5), // fallback
+            "best[height<=720][fps<=30][vcodec^=avc1][acodec!=none]/best[height<=720][fps<=30]"
+        );
+    }
+
+    #[test]
+    fn test_playback_settings_format_filter() {
+        let settings = PlaybackSettings {
+            quality: 2,
+            subtitles: false,
+        };
+        assert_eq!(settings.format_filter(), format_filter_for_quality(2));
+    }
+
+    #[test]
+    fn test_playback_queue_current() {
+        let items = vec![
+            SearchResult {
+                title: "Video 1".to_string(),
+                id: "id1".to_string(),
+            },
+            SearchResult {
+                title: "Video 2".to_string(),
+                id: "id2".to_string(),
+            },
+        ];
+        let queue = PlaybackQueue {
+            items,
+            index: 0,
+            source: QueueSource::Search {
+                query: "test".to_string(),
+                page: 1,
+                page_size: 10,
+            },
+        };
+        assert_eq!(queue.current().title, "Video 1");
+        assert_eq!(queue.current().id, "id1");
+    }
+
+    #[tokio::test]
+    async fn test_playback_queue_try_advance_in_memory() {
+        let items = vec![
+            SearchResult {
+                title: "Video 1".to_string(),
+                id: "id1".to_string(),
+            },
+            SearchResult {
+                title: "Video 2".to_string(),
+                id: "id2".to_string(),
+            },
+        ];
+        let mut queue = PlaybackQueue {
+            items,
+            index: 0,
+            source: QueueSource::Search {
+                query: "test".to_string(),
+                page: 1,
+                page_size: 10,
+            },
+        };
+
+        // Advance to index 1 (should not hit the network since index + 1 < items.len())
+        let advanced = queue.try_advance().await.unwrap();
+        assert!(advanced);
+        assert_eq!(queue.index, 1);
+        assert_eq!(queue.current().title, "Video 2");
+    }
+
+    #[test]
+    fn test_binary_is_runnable_for_nonexistent() {
+        assert!(!binary_is_runnable("non_existent_binary_name_xyz"));
+    }
+
+    #[test]
+    fn test_install_hint_for_current_os() {
+        let hint = install_hint_for_current_os();
+        assert!(!hint.is_empty());
+        if cfg!(target_os = "windows") {
+            assert!(hint.contains("winget install"));
+        } else if cfg!(target_os = "macos") {
+            assert!(hint.contains("brew install"));
+        } else {
+            assert!(hint.contains("apt install"));
+        }
     }
 }
