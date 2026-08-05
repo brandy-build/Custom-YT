@@ -133,7 +133,11 @@ async fn main() -> Result<()> {
 
         'playback: loop {
             println!();
-            println!("Now playing: {} {}", queue.current().title, if loop_video { "[Looping]" } else { "" });
+            println!(
+                "Now playing: {} {}",
+                queue.current().title,
+                if loop_video { "[Looping]" } else { "" }
+            );
 
             if let Err(err) = play_current(&queue, &settings, loop_video).await {
                 println!("Playback error: {err:#}");
@@ -327,7 +331,11 @@ fn prompt_quality_and_subtitles() -> Result<PlaybackSettings> {
 
 // Gemini: Purpose & Solution - Replaced mpv with ffplay architecture.
 // First fetches direct stream URLs via `yt-dlp -g` to decouple media playback from YouTube extraction hooks, eliminating sub-process / Lua script exit errors on Windows.
-async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings, loop_video: bool) -> Result<()> {
+async fn play_current(
+    queue: &PlaybackQueue,
+    settings: &PlaybackSettings,
+    loop_video: bool,
+) -> Result<()> {
     let selected = queue.current();
     let watch_url = format!("https://www.youtube.com/watch?v={}", selected.id);
 
@@ -360,7 +368,10 @@ async fn play_current(queue: &PlaybackQueue, settings: &PlaybackSettings, loop_v
 
 // Gemini: Purpose & Solution - Directly queries `yt-dlp -g` for raw stream links.
 // YouTube DASH streams return separate lines for video and audio URLs; this helper splits them so ffplay can load both simultaneously.
-async fn resolve_stream_urls(watch_url: &str, format_filter: &str) -> Result<(String, Option<String>)> {
+async fn resolve_stream_urls(
+    watch_url: &str,
+    format_filter: &str,
+) -> Result<(String, Option<String>)> {
     let output = Command::new("yt-dlp")
         .arg("-g")
         .arg("-f")
@@ -376,7 +387,11 @@ async fn resolve_stream_urls(watch_url: &str, format_filter: &str) -> Result<(St
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let urls: Vec<&str> = stdout.lines().map(|line| line.trim()).filter(|line| !line.is_empty()).collect();
+    let urls: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
 
     if urls.is_empty() {
         bail!("yt-dlp returned no stream URLs");
@@ -404,7 +419,7 @@ async fn launch_ffplay(
     let window_title = sanitize_window_title(title);
 
     let mut ffplay = Command::new("ffplay");
-    
+
     // If looping, we don't want autoexit
     if loop_video {
         ffplay.arg("-loop").arg("0");
@@ -426,7 +441,10 @@ async fn launch_ffplay(
 
     // Apply subtitle overlay if subtitles were downloaded
     if let Some(sub_path) = subtitle_file {
-        let path_str = sub_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
+        let path_str = sub_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(':', "\\:");
         ffplay.arg("-vf").arg(format!("subtitles='{}'", path_str));
     }
 
@@ -543,17 +561,29 @@ fn print_startup_banner() {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    
+
     println!();
-    println!("{}CuttleFish{} - Minimalist YouTube Terminal Player", white_bold, reset);
+    println!(
+        "{}CuttleFish{} - Minimalist YouTube Terminal Player",
+        white_bold, reset
+    );
     println!();
     println!("{}Command Manual{}", white_bold, reset);
     println!("  {}1.{} Enter a search query.", dim, reset);
     println!("  {}2.{} Pick video mode or playlist mode.", dim, reset);
-    println!("  {}3.{} In video mode, use n/p paging and pick from visible 10 results.", dim, reset);
-    println!("  {}4.{} Choose a quality preset, or press Enter for 720p.", dim, reset);
+    println!(
+        "  {}3.{} In video mode, use n/p paging and pick from visible 10 results.",
+        dim, reset
+    );
+    println!(
+        "  {}4.{} Choose a quality preset, or press Enter for 720p.",
+        dim, reset
+    );
     println!("  {}5.{} Optionally enable subtitles.", dim, reset);
-    println!("  {}6.{} ffplay streams the direct media URLs seamlessly.", dim, reset);
+    println!(
+        "  {}6.{} ffplay streams the direct media URLs seamlessly.",
+        dim, reset
+    );
     println!(
         "  {}7.{} After playback: n = next video, r = replay, c = change quality, l = toggle loop, s = new search, q = quit.",
         dim, reset
@@ -562,7 +592,10 @@ fn print_startup_banner() {
     println!("{}Architecture{}", white_bold, reset);
     println!("  {}input -> yt-dlp search -> result selection -> direct URL resolution -> ffplay -> next/replay/search{}", dim, reset);
     println!("{}Design{}", white_bold, reset);
-    println!("  {}terminal-first, ultra-low-RAM (~40MB), bulletproof process execution{}", dim, reset);
+    println!(
+        "  {}terminal-first, ultra-low-RAM (~40MB), bulletproof process execution{}",
+        dim, reset
+    );
     println!();
 }
 
@@ -625,7 +658,9 @@ fn prompt_choice_with_default(
 
         match trimmed.parse::<usize>() {
             Ok(value) if (min..=max).contains(&value) => return Ok(value),
-            _ => println!("Enter a number between {min} and {max}, or press Enter for the default."),
+            _ => {
+                println!("Enter a number between {min} and {max}, or press Enter for the default.")
+            }
         }
     }
 }
@@ -676,7 +711,11 @@ async fn fetch_video_search_page(
         return Ok(Vec::new());
     }
 
-    Ok(all_results.into_iter().skip(start).take(page_size).collect())
+    Ok(all_results
+        .into_iter()
+        .skip(start)
+        .take(page_size)
+        .collect())
 }
 
 async fn fetch_playlist_search_results(query: &str, limit: usize) -> Result<Vec<PlaylistResult>> {
